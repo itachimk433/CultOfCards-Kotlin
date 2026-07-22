@@ -100,7 +100,7 @@ fun GameOverScreen(
                         }
                         Text(
                             text     = run.cultId.displayName,
-                            color    = Color(getCultColorForId(run.cultId.name)),
+                            color    = Color(getCultColor(run.cultId.name)),
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
