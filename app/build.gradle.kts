@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.cultofcards"
+    namespace = "com.mkdev.cultofcardsword"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.cultofcards"
+        applicationId = "com.mkdev.cultofcardsword"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
