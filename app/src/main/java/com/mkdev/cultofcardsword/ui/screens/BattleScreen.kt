@@ -25,6 +25,7 @@ import com.mkdev.cultofcardsword.data.*
 import com.mkdev.cultofcardsword.ui.components.CardView
 import com.mkdev.cultofcardsword.ui.components.EnemyView
 import com.mkdev.cultofcardsword.ui.theme.*
+import com.mkdev.cultofcardsword.viewmodel.AttackAnimation
 import com.mkdev.cultofcardsword.viewmodel.BattlePhase
 import com.mkdev.cultofcardsword.viewmodel.BattleViewModel
 import com.mkdev.cultofcardsword.viewmodel.GameViewModel
@@ -148,16 +149,17 @@ fun BattleScreen(
         ) {
             // ---- Top: Player stats bar ----
             PlayerStatsBar(
-                hp        = s.playerHp,
-                maxHp     = s.playerMaxHp,
-                block     = s.playerBlock,
-                mana      = s.playerMana,
-                maxMana   = s.playerMaxMana,
-                energy    = s.energy,
-                maxEnergy = s.maxEnergy,
-                rank      = currentRun?.swordsmanRank,
-                turn      = s.turn,
-                cultId    = currentRun?.cultId
+                hp              = s.playerHp,
+                maxHp           = s.playerMaxHp,
+                block           = s.playerBlock,
+                mana            = s.playerMana,
+                maxMana         = s.playerMaxMana,
+                energy          = s.energy,
+                maxEnergy       = s.maxEnergy,
+                rank            = currentRun?.swordsmanRank,
+                turn            = s.turn,
+                cultId          = currentRun?.cultId,
+                attackAnimation = if (showAnimMsg) s.attackAnimation else null
             )
 
             Spacer(Modifier.height(8.dp))
@@ -340,11 +342,52 @@ private fun PlayerStatsBar(
     energy: Int, maxEnergy: Int,
     rank: SwordsmanRank?,
     turn: Int,
-    cultId: CultId?
+    cultId: CultId?,
+    attackAnimation: AttackAnimation? = null
 ) {
     val hpFraction   = (hp.toFloat() / maxHp.toFloat()).coerceIn(0f, 1f)
     val manaFraction = if (maxMana > 0) (mana.toFloat() / maxMana.toFloat()).coerceIn(0f, 1f) else 0f
     val cultColor    = cultId?.let { Color(it.color) } ?: SwordGold
+
+    // ---- Enemy-damage float animation ----
+    var showPlayerDmg by remember { mutableStateOf(false) }
+    var playerDmgValue by remember { mutableIntStateOf(0) }
+
+    val playerDmgOffsetY by animateFloatAsState(
+        targetValue   = if (showPlayerDmg) -40f else 0f,
+        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+        label         = "player_dmg_float"
+    )
+    val playerDmgAlpha by animateFloatAsState(
+        targetValue   = if (showPlayerDmg) 0f else 1f,
+        animationSpec = tween(durationMillis = 650, delayMillis = 150),
+        label         = "player_dmg_alpha"
+    )
+    // Shake the HP row when hit
+    val infiniteShake = rememberInfiniteTransition(label = "player_shake")
+    val shakeX by infiniteShake.animateFloat(
+        initialValue  = -6f,
+        targetValue   = 6f,
+        animationSpec = infiniteRepeatable(tween(55, easing = LinearEasing), RepeatMode.Reverse),
+        label         = "player_shake_x"
+    )
+    var playerHitState by remember { mutableStateOf(false) }
+    val activeShakeX = if (playerHitState) shakeX else 0f
+
+    LaunchedEffect(attackAnimation) {
+        val anim = attackAnimation
+        if (anim != null && !anim.isPlayerAttack && anim.damage > 0) {
+            playerDmgValue = anim.damage
+            showPlayerDmg  = false   // reset
+            playerHitState = true
+            delay(20)
+            showPlayerDmg  = true
+            delay(150)
+            playerHitState = false
+            delay(600)
+            showPlayerDmg  = false
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -353,7 +396,7 @@ private fun PlayerStatsBar(
             .background(DarkSurface)
             .padding(10.dp)
     ) {
-        Column {
+        Column(modifier = Modifier.offset(x = activeShakeX.dp)) {
             // Name + rank + turn
             Row(
                 modifier              = Modifier.fillMaxWidth(),
@@ -377,29 +420,57 @@ private fun PlayerStatsBar(
 
             Spacer(Modifier.height(4.dp))
 
-            // HP row
-            Row(
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    text       = "❤ $hp/$maxHp",
-                    color      = HpGreen,
-                    fontSize   = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier   = Modifier.width(72.dp)
-                )
-                LinearProgressIndicator(
-                    progress   = { hpFraction },
-                    modifier   = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)),
-                    color      = when {
-                        hpFraction < 0.25f -> DangerRed
-                        hpFraction < 0.5f  -> EnergyAmber
-                        else               -> HpGreen
-                    },
-                    trackColor = CardBorder
-                )
-                if (block > 0) Text("🛡$block", color = BlockGray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            // HP row — wrapped in a Box so we can overlay the damage float
+            Box {
+                Row(
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier              = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text       = "❤ $hp/$maxHp",
+                        color      = HpGreen,
+                        fontSize   = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier   = Modifier.width(72.dp)
+                    )
+                    LinearProgressIndicator(
+                        progress   = { hpFraction },
+                        modifier   = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)),
+                        color      = when {
+                            hpFraction < 0.25f -> DangerRed
+                            hpFraction < 0.5f  -> EnergyAmber
+                            else               -> HpGreen
+                        },
+                        trackColor = CardBorder
+                    )
+                    if (block > 0) Text("🛡$block", color = BlockGray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+
+                // Floating damage number — appears over the HP bar when enemy hits
+                if (playerDmgValue > 0) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .offset(x = 76.dp, y = playerDmgOffsetY.dp)
+                            .alpha(1f - playerDmgAlpha)
+                    ) {
+                        // Shadow
+                        Text(
+                            text       = "-$playerDmgValue",
+                            color      = Color.Black.copy(alpha = 0.55f),
+                            fontSize   = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier   = Modifier.offset(x = 1.dp, y = 1.dp)
+                        )
+                        Text(
+                            text       = "-$playerDmgValue",
+                            color      = if (playerDmgValue >= 15) Color(0xFFFF6600) else DangerRed,
+                            fontSize   = 20.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(3.dp))

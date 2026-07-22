@@ -12,6 +12,7 @@ import com.mkdev.cultofcardsword.viewmodel.BattleViewModel
 import com.mkdev.cultofcardsword.viewmodel.GameViewModel
 
 object Routes {
+    const val SPLASH          = "splash"
     const val MAIN_MENU       = "main_menu"
     const val CULT_SELECT     = "cult_select"
     const val CAMPAIGN        = "campaign"
@@ -32,7 +33,17 @@ fun AppNavigation() {
     val gameVm: GameViewModel   = viewModel()
     val battleVm: BattleViewModel = viewModel()
 
-    NavHost(navController = navController, startDestination = Routes.MAIN_MENU) {
+    NavHost(navController = navController, startDestination = Routes.SPLASH) {
+
+        composable(Routes.SPLASH) {
+            SplashScreen(
+                onReady = {
+                    navController.navigate(Routes.MAIN_MENU) {
+                        popUpTo(Routes.SPLASH) { inclusive = true }
+                    }
+                }
+            )
+        }
 
         composable(Routes.MAIN_MENU) {
             MainMenuScreen(
