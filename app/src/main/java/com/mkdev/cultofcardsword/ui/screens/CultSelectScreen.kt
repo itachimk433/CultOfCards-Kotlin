@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mkdev.cultofcardsword.data.CultId
+import com.mkdev.cultofcardsword.ui.components.DualSwordsmanViewer
 import com.mkdev.cultofcardsword.ui.theme.*
 
 @Composable
@@ -67,10 +68,10 @@ fun CultSelectScreen(
 
             // Grid of cults
             LazyVerticalGrid(
-                columns            = GridCells.Fixed(3),
+                columns               = GridCells.Fixed(3),
                 verticalArrangement   = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier           = Modifier.weight(1f)
+                modifier              = Modifier.weight(1f)
             ) {
                 items(cults) { cult ->
                     CultCard(
@@ -138,19 +139,38 @@ private fun CultDetailPanel(cult: CultId, onConfirm: () -> Unit) {
             .padding(14.dp)
     ) {
         Column {
+            // ── Header row ──────────────────────────────────────────────
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(cult.icon, fontSize = 28.sp)
                 Spacer(Modifier.width(10.dp))
                 Column {
-                    Text(cult.displayName, color = cultColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text(cult.subtitle,    color = AccentGold, fontSize = 10.sp)
+                    Text(cult.displayName, color = cultColor,    fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(cult.subtitle,    color = AccentGold,   fontSize = 10.sp)
                 }
             }
             Spacer(Modifier.height(6.dp))
             Text(cult.description, color = TextSecondary, fontSize = 10.sp, lineHeight = 14.sp)
-            Spacer(Modifier.height(8.dp))
 
-            // Stat bars
+            // ── 3-D model viewer — only for Dual Swordsman ───────────────
+            if (cult == CultId.DUAL) {
+                Spacer(Modifier.height(10.dp))
+                DualSwordsmanViewer(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(220.dp)
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Drag to rotate · zoom disabled",
+                    color     = TextSecondary.copy(alpha = 0.5f),
+                    fontSize  = 8.sp,
+                    textAlign = TextAlign.Center,
+                    modifier  = Modifier.fillMaxWidth()
+                )
+            }
+
+            // ── Stat bars ────────────────────────────────────────────────
+            Spacer(Modifier.height(8.dp))
             Text("Base Stat Distribution (Total: ${stats.overallPower})", color = TextSecondary, fontSize = 9.sp)
             Spacer(Modifier.height(4.dp))
             StatBar("⚔ ATK", stats.attack,   stats.overallPower, DangerRed)
@@ -181,10 +201,10 @@ private fun StatBar(label: String, value: Int, total: Int, color: Color) {
     ) {
         Text(label, color = TextSecondary, fontSize = 9.sp, modifier = Modifier.width(48.dp))
         LinearProgressIndicator(
-            progress     = { value.toFloat() / total.toFloat() },
-            modifier     = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)),
-            color        = color,
-            trackColor   = CardBorder
+            progress   = { value.toFloat() / total.toFloat() },
+            modifier   = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)),
+            color      = color,
+            trackColor = CardBorder
         )
         Text("$value", color = color, fontSize = 9.sp, modifier = Modifier.width(22.dp), textAlign = TextAlign.End)
     }
