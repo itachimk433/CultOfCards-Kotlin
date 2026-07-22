@@ -33,12 +33,12 @@ fun DualSwordsmanViewer(modifier: Modifier = Modifier) {
     val modelLoader       = rememberModelLoader(engine)
     val materialLoader    = rememberMaterialLoader(engine)
     val environmentLoader = rememberEnvironmentLoader(engine)
-    val nodes             = rememberNodes()
+    val childNodes        = rememberNodes()
 
     // Load the GLB from assets/models/ once
     LaunchedEffect(Unit) {
         val instance = modelLoader.createModelInstance("models/dual_swordsman.glb")
-        nodes += ModelNode(
+        childNodes += ModelNode(
             modelInstance = instance,
             scaleToUnits  = 1.8f,
             centerOrigin  = Position(y = -0.5f)
@@ -60,11 +60,11 @@ fun DualSwordsmanViewer(modifier: Modifier = Modifier) {
             modelLoader       = modelLoader,
             materialLoader    = materialLoader,
             environmentLoader = environmentLoader,
-            nodes             = nodes,
-            // Fixed camera position — users orbit around the model but cannot zoom
+            childNodes        = childNodes,
+            // Fixed orbit camera — users rotate freely but cannot zoom in/out
             cameraManipulator = rememberCameraManipulator(
-                orbitHomePosition   = Position(x = 0f, y = 0.5f, z = 3.5f),
-                orbitTargetPosition = Position(x = 0f, y = 0f,   z = 0f),
+                orbitHomePosition = Position(x = 0f, y = 0.5f, z = 3.5f),
+                targetPosition    = Position(x = 0f, y = 0f,   z = 0f),
             ),
         )
     }
