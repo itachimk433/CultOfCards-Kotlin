@@ -14,6 +14,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -26,6 +27,8 @@ import com.mkdev.cultofcardsword.viewmodel.BattlePhase
 import com.mkdev.cultofcardsword.viewmodel.BattleViewModel
 import com.mkdev.cultofcardsword.viewmodel.GameViewModel
 import kotlinx.coroutines.delay
+
+private const val TURN_SECONDS = 8f
 
 @Composable
 fun BattleScreen(
@@ -63,7 +66,7 @@ fun BattleScreen(
         label         = "slash_alpha"
     )
 
-    // ---- Player damage float — state lives here so no nested LaunchedEffect can cancel it ----
+    // ---- Player damage float — all state here, driven by single coroutine ----
     var playerDmgValue  by remember { mutableIntStateOf(0) }
     var showPlayerDmg   by remember { mutableStateOf(false) }
     var playerHitActive by remember { mutableStateOf(false) }
@@ -87,12 +90,36 @@ fun BattleScreen(
     )
     val activeShakeX = if (playerHitActive) shakeX else 0f
 
-    // ---- Single coroutine drives ALL attack animations ----
+    // ---- Countdown timer ----
+    var timeLeft by remember { mutableFloatStateOf(TURN_SECONDS) }
+    // Key on (phase, turn) so the timer resets at the start of each player turn
+    val phaseSnapshot  = state?.phase
+    val turnSnapshot   = state?.turn ?: 0
+    LaunchedEffect(phaseSnapshot, turnSnapshot) {
+        if (phaseSnapshot == BattlePhase.PLAYER) {
+            timeLeft = TURN_SECONDS
+            while (timeLeft > 0f) {
+                delay(50)
+                timeLeft = (timeLeft - 0.05f).coerceAtLeast(0f)
+            }
+            // Timer expired — trigger enemy turn if still in player phase
+            if (state?.phase == BattlePhase.PLAYER) {
+                battleVm.endTurn()
+            }
+        } else {
+            // Freeze visible bar during enemy phase / animations
+            timeLeft = 0f
+        }
+    }
+
+    // ---- Unified attack animation coroutine ----
+    // Key on attackAnimation object — fires whenever a new animation is published.
     LaunchedEffect(state?.attackAnimation) {
         val anim = state?.attackAnimation ?: return@LaunchedEffect
         showAnimMsg = true
 
         if (anim.isPlayerAttack) {
+            // Player attacks enemy
             flashColor = Color(getCultColor(run?.cultId?.name ?: "DUAL"))
             slashIcon  = when {
                 run?.cultId?.name?.contains("FLAME")     == true -> "🔥"
@@ -106,36 +133,48 @@ fun BattleScreen(
                 anim.damage >= 25                                 -> "💥"
                 else                                              -> "⚔"
             }
+            flashActive  = true
+            slashVisible = true
+            delay(120)
+            flashActive  = false
+            delay(500)
+            slashVisible = false
+            delay(300)
+            showAnimMsg = false
+            battleVm.clearAnimation()
+
         } else {
-            // Enemy attacks player
-            flashColor = if (anim.damage > 0) Color.Red else Color.Blue
+            // Enemy's turn (attack, block, or buff)
+            flashColor = if (anim.damage > 0) Color.Red else Color(0xFF3355AA)
             slashIcon  = if (anim.damage > 0) "💥" else "🛡"
 
             if (anim.damage > 0) {
-                // Trigger player damage float from this coroutine — cannot be cancelled by recomposition
+                // Player damage float — triggered from here so it can't be interrupted
                 playerDmgValue  = anim.damage
-                showPlayerDmg   = false      // snap back to start position
+                showPlayerDmg   = false      // snap to origin
                 playerHitActive = true
-                delay(20)                    // one frame so the snap propagates
-                showPlayerDmg   = true       // begin float-up + fade-out
+                delay(20)                    // one frame so the reset propagates
+                showPlayerDmg   = true       // start float-up + fade-out
                 delay(180)
-                playerHitActive = false      // stop shake
-                delay(560)
-                showPlayerDmg   = false      // number fades/returns
+                playerHitActive = false
+                delay(520)
+                showPlayerDmg   = false
+            } else {
+                delay(300) // brief pause for block/buff messages
             }
+
+            flashActive  = true
+            slashVisible = true
+            delay(120)
+            flashActive  = false
+            delay(500)
+            slashVisible = false
+            delay(300)
+            showAnimMsg = false
+
+            // Hand off to the ViewModel to set up the next player turn
+            battleVm.startPlayerTurn()
         }
-
-        // Flash + slash fire for both attack directions
-        flashActive  = true
-        slashVisible = true
-        delay(120)
-        flashActive  = false
-        delay(500)
-        slashVisible = false
-        delay(400)
-
-        showAnimMsg = false
-        battleVm.clearAnimation()
     }
 
     LaunchedEffect(errorMsg) {
@@ -160,6 +199,13 @@ fun BattleScreen(
             CircularProgressIndicator(color = SwordGold)
         }
         return
+    }
+
+    // Countdown bar colour: green → amber → red
+    val timerFraction = (timeLeft / TURN_SECONDS).coerceIn(0f, 1f)
+    val timerColor = when {
+        timerFraction > 0.5f -> lerp(EnergyAmber, HpGreen,  (timerFraction - 0.5f) * 2f)
+        else                 -> lerp(DangerRed,   EnergyAmber, timerFraction * 2f)
     }
 
     Box(modifier = Modifier.fillMaxSize().background(DeepBlack)) {
@@ -189,9 +235,47 @@ fun BattleScreen(
                 shakeOffsetX = activeShakeX
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
 
-            // ---- Message / animation row ----
+            // ---- Countdown bar (only during player phase) ----
+            if (s.phase == BattlePhase.PLAYER || s.phase == BattlePhase.ENEMY) {
+                val isPlayerPhase = s.phase == BattlePhase.PLAYER
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier              = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment     = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text      = if (isPlayerPhase) "⏱ Attack before time runs out!" else "⚔ Enemy acting...",
+                            color     = if (isPlayerPhase && timeLeft <= 2f) DangerRed else TextSecondary,
+                            fontSize  = 9.sp,
+                            fontWeight = if (isPlayerPhase && timeLeft <= 2f) FontWeight.Bold else FontWeight.Normal
+                        )
+                        if (isPlayerPhase) {
+                            Text(
+                                text      = "${timeLeft.toInt() + 1}s",
+                                color     = timerColor,
+                                fontSize  = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    LinearProgressIndicator(
+                        progress   = { if (isPlayerPhase) timerFraction else 0f },
+                        modifier   = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color      = timerColor,
+                        trackColor = CardBorder
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            // ---- Message row ----
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -207,7 +291,7 @@ fun BattleScreen(
                         else "⚔ ${anim.attackerName} deals ${anim.damage} damage!"
                     } else {
                         if (anim.damage > 0) "💥 ${anim.attackerName} strikes you for ${anim.damage}!"
-                        else "🛡 ${anim.attackerName}'s attack is blocked!"
+                        else "🛡 ${anim.attackerName} ${s.message.substringAfter("${anim.attackerName}: ").ifEmpty { "acts." }}"
                     }
                 } else s.message
 
@@ -244,14 +328,14 @@ fun BattleScreen(
 
             Spacer(Modifier.weight(1f))
 
-            // ---- Cards played hint ----
+            // ---- Hand hint ----
             if (s.phase == BattlePhase.PLAYER) {
                 val cardUsed = s.cardsPlayedThisTurn >= 1
                 Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Text(
-                        text     = if (cardUsed) "Card used — End Turn to continue" else "Double-tap a card to strike",
-                        color    = if (cardUsed) EnergyAmber else TextSecondary,
-                        fontSize = 10.sp
+                        text      = if (cardUsed) "✅ Card used — timer will end your turn" else "Double-tap a card to strike",
+                        color     = if (cardUsed) HpGreen else TextSecondary,
+                        fontSize  = 10.sp
                     )
                 }
                 Spacer(Modifier.height(4.dp))
@@ -288,37 +372,17 @@ fun BattleScreen(
 
             Spacer(Modifier.height(8.dp))
 
-            // ---- Deck info + End Turn ----
+            // ---- Deck info row (no End Turn button) ----
             Row(
-                modifier              = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier              = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment     = Alignment.CenterVertically
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Draw",    color = TextSecondary, fontSize = 9.sp)
-                    Text("${s.drawPile.size}", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Hand",    color = TextSecondary, fontSize = 9.sp)
-                    Text("${s.hand.size}", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Discard", color = TextSecondary, fontSize = 9.sp)
-                    Text("${s.discardPile.size}", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-
-                Button(
-                    onClick  = { if (s.phase == BattlePhase.PLAYER) battleVm.endTurn() },
-                    enabled  = s.phase == BattlePhase.PLAYER,
-                    colors   = ButtonDefaults.buttonColors(
-                        containerColor = if (s.phase == BattlePhase.PLAYER) SwordGold else CardBorder,
-                        contentColor   = if (s.phase == BattlePhase.PLAYER) Color.Black else TextSecondary
-                    ),
-                    modifier = Modifier.height(44.dp).width(110.dp),
-                    shape    = RoundedCornerShape(10.dp)
-                ) {
-                    Text("End Turn", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                }
+                DeckCounter("Draw",    s.drawPile.size)
+                DeckCounter("Hand",    s.hand.size)
+                DeckCounter("Discard", s.discardPile.size)
             }
         }
 
@@ -355,7 +419,7 @@ fun BattleScreen(
 }
 
 // ---------------------------------------------------------------------------
-// PlayerStatsBar — receives pre-computed animation values from BattleScreen
+// PlayerStatsBar — receives pre-computed animation values
 // ---------------------------------------------------------------------------
 @Composable
 private fun PlayerStatsBar(
@@ -430,16 +494,14 @@ private fun PlayerStatsBar(
                     if (block > 0) Text("🛡$block", color = BlockGray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
 
-                // Floating "-N" that rises from the HP bar when an enemy hits
+                // Floating "-N" damage number
                 if (dmgValue > 0) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
                             .offset(x = 76.dp, y = dmgOffsetY.dp)
-                            // dmgAlpha: 1→0 as it rises; we invert so number is opaque while rising, then transparent
-                            .alpha(1f - dmgAlpha)
+                            .alpha(1f - dmgAlpha) // inverted: opaque while rising, fades to 0
                     ) {
-                        // Drop shadow
                         Text(
                             text       = "-$dmgValue",
                             color      = Color.Black.copy(alpha = 0.6f),
@@ -489,6 +551,14 @@ private fun PlayerStatsBar(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DeckCounter(label: String, count: Int) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = TextSecondary, fontSize = 9.sp)
+        Text("$count", color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 

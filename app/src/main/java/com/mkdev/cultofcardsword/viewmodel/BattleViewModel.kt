@@ -135,12 +135,12 @@ class BattleViewModel : ViewModel() {
             usedSkills          = if (card.type == CardType.SKILL) true else s.usedSkills
         )
 
-        val effects     = card.effects
+        val effects         = card.effects
         val hasEdgeTalisman = run.relics.any { it.id == "edge_talisman" }
-        val attackBonus = run.attackBonus + (if (hasEdgeTalisman) 2 else 0)
-        val isWeak      = state.getEffect(EffectType.WEAK) > 0
+        val attackBonus     = run.attackBonus + (if (hasEdgeTalisman) 2 else 0)
+        val isWeak          = state.getEffect(EffectType.WEAK) > 0
 
-        var msg = card.name
+        var msg      = card.name
         var totalDmg = state.totalDamageDealt
 
         // Mana gain
@@ -154,11 +154,11 @@ class BattleViewModel : ViewModel() {
             if (state.isFirstAttack) { dmg *= 2; state = state.copy(isFirstAttack = false) }
             if (isWeak) dmg = (dmg * 0.75).toInt()
             val animation = AttackAnimation(
-                damage          = dmg,
-                targetEnemyIdx  = 0,
-                isPlayerAttack  = true,
-                attackerName    = card.name,
-                isCritical      = state.isFirstAttack
+                damage         = dmg,
+                targetEnemyIdx = 0,
+                isPlayerAttack = true,
+                attackerName   = card.name,
+                isCritical     = state.isFirstAttack
             )
             state = state.dealDamageToEnemy(0, dmg).copy(attackAnimation = animation)
             totalDmg += dmg
@@ -239,6 +239,14 @@ class BattleViewModel : ViewModel() {
         _battleState.value = _battleState.value?.copy(attackAnimation = null)
     }
 
+    /**
+     * Process the enemy's turn: move to ENEMY phase, execute all enemy moves,
+     * and always set an [AttackAnimation] (even for block/buff) so the UI's
+     * LaunchedEffect fires and can call [startPlayerTurn] when done.
+     *
+     * Does NOT start the next player turn — the UI calls [startPlayerTurn]
+     * after the animation has played.
+     */
     fun endTurn() {
         var s = _battleState.value ?: return
         if (s.phase != BattlePhase.PLAYER) return
@@ -250,11 +258,11 @@ class BattleViewModel : ViewModel() {
             if (enemy.hp <= 0) return@map enemy
             var e = enemy
 
-            // Burn damage (does NOT decrement — stacks stay)
+            // Burn damage
             val burnStacks = getEffectValue(e.effects, EffectType.BURN)
             if (burnStacks > 0) e = e.copy(hp = maxOf(0, e.hp - burnStacks))
 
-            // Poison damage (decrements by 1 per turn)
+            // Poison damage (decrements by 1)
             val poisonStacks = getEffectValue(e.effects, EffectType.POISON)
             if (poisonStacks > 0) {
                 e = e.copy(
@@ -263,10 +271,19 @@ class BattleViewModel : ViewModel() {
                 )
             }
 
-            // Freeze reduces movement — skip attack if frozen
+            // Freeze — skip attack
             val freezeStacks = getEffectValue(e.effects, EffectType.FREEZE)
             if (freezeStacks > 0) {
                 e = e.copy(effects = decrementEffect(e.effects, EffectType.FREEZE))
+                // Set a "frozen" animation so UI still transitions
+                s = s.copy(
+                    message         = "${e.name} is frozen and cannot act!",
+                    attackAnimation = AttackAnimation(
+                        damage         = 0,
+                        isPlayerAttack = false,
+                        attackerName   = e.name
+                    )
+                )
                 return@map e.copy(moveIndex = e.moveIndex + 1)
             }
 
@@ -276,15 +293,15 @@ class BattleViewModel : ViewModel() {
             val move = e.moves[e.moveIndex % e.moves.size]
             when (move.type) {
                 "attack" -> {
-                    val dmg = move.value + e.strength
+                    val dmg          = move.value + e.strength
                     val isVulnerable = getEffectValue(s.playerEffects, EffectType.VULNERABLE) > 0
-                    val finalDmg = if (isVulnerable) (dmg * 1.5).toInt() else dmg
-                    val blocked  = minOf(s.playerBlock, finalDmg)
-                    val netDmg   = maxOf(0, finalDmg - blocked)
+                    val finalDmg     = if (isVulnerable) (dmg * 1.5).toInt() else dmg
+                    val blocked      = minOf(s.playerBlock, finalDmg)
+                    val netDmg       = maxOf(0, finalDmg - blocked)
                     s = s.copy(
-                        playerBlock  = maxOf(0, s.playerBlock - finalDmg),
-                        playerHp     = maxOf(0, s.playerHp - netDmg),
-                        message      = "${e.name}: ${move.label} hit for $netDmg damage",
+                        playerBlock     = maxOf(0, s.playerBlock - finalDmg),
+                        playerHp        = maxOf(0, s.playerHp - netDmg),
+                        message         = "${e.name}: ${move.label} — $netDmg damage to you!",
                         attackAnimation = AttackAnimation(
                             damage         = netDmg,
                             targetEnemyIdx = -1,
@@ -292,14 +309,21 @@ class BattleViewModel : ViewModel() {
                             attackerName   = e.name
                         )
                     )
-                    // Apply move's debuff to player
                     if (move.effectType != null && move.effectType != EffectType.STRENGTH) {
                         s = s.copy(playerEffects = applyEffect(s.playerEffects, move.effectType, move.effectValue))
                     }
                 }
                 "block" -> {
                     e = e.copy(block = e.block + move.value)
-                    s = s.copy(message = "${e.name}: ${move.label} (+${move.value} block)")
+                    s = s.copy(
+                        message         = "${e.name}: ${move.label} (+${move.value} block)",
+                        // Always set an animation so the UI LaunchedEffect fires
+                        attackAnimation = AttackAnimation(
+                            damage         = 0,
+                            isPlayerAttack = false,
+                            attackerName   = e.name
+                        )
+                    )
                 }
                 "buff" -> {
                     if (move.effectType == EffectType.STRENGTH) {
@@ -307,7 +331,14 @@ class BattleViewModel : ViewModel() {
                     } else if (move.effectType != null) {
                         e = e.copy(effects = applyEffect(e.effects, move.effectType, move.effectValue))
                     }
-                    s = s.copy(message = "${e.name}: ${move.label}")
+                    s = s.copy(
+                        message         = "${e.name}: ${move.label}",
+                        attackAnimation = AttackAnimation(
+                            damage         = 0,
+                            isPlayerAttack = false,
+                            attackerName   = e.name
+                        )
+                    )
                 }
             }
             e = e.copy(moveIndex = e.moveIndex + 1)
@@ -329,15 +360,25 @@ class BattleViewModel : ViewModel() {
 
         // Check defeat
         if (s.playerHp <= 0) {
-            _battleState.value = s.copy(phase = BattlePhase.DEFEAT, message = "You have fallen...")
+            _battleState.value = s.copy(phase = BattlePhase.DEFEAT, message = "You have fallen...", attackAnimation = null)
             return
         }
 
-        // Regenerate mana (5 per turn, up to max)
-        val newMana = minOf(s.playerMaxMana, s.playerMana + 5)
+        // Publish the ENEMY phase state — UI will call startPlayerTurn() after animation
+        _battleState.value = s
+    }
 
-        // Start next player turn
-        val drawCount = 5 + s.extraDraw
+    /**
+     * Start the next player turn. Called by the UI after the enemy-attack
+     * animation has finished playing. Safe to call from any thread.
+     */
+    fun startPlayerTurn() {
+        var s = _battleState.value ?: return
+        // Guard: don't start a player turn if battle is already over
+        if (s.phase == BattlePhase.DEFEAT || s.phase == BattlePhase.VICTORY) return
+
+        val newMana    = minOf(s.playerMaxMana, s.playerMana + 5)
+        val drawCount  = 5 + s.extraDraw
         s = s.drawCards(drawCount)
         s = s.copy(
             playerBlock         = 0,
@@ -348,12 +389,9 @@ class BattleViewModel : ViewModel() {
             turn                = s.turn + 1,
             phase               = BattlePhase.PLAYER,
             cardsPlayedThisTurn = 0,
-            attackAnimation     = null
+            attackAnimation     = null,
+            message             = "Your turn — attack within 8 seconds!"
         )
-        if (!s.message.contains("damage") && !s.message.contains("hit")) {
-            s = s.copy(message = "Your turn — double-tap a card to use it.")
-        }
-
         _battleState.value = s
     }
 
@@ -400,8 +438,8 @@ class BattleViewModel : ViewModel() {
         val enemy = enemies[idx]
         if (enemy.hp <= 0) return this
         val isVulnerable = getEffectValue(enemy.effects, EffectType.VULNERABLE) > 0
-        val dmg     = if (isVulnerable) (rawDmg * 1.5).toInt() else rawDmg
-        val blocked = minOf(enemy.block, dmg)
+        val dmg      = if (isVulnerable) (rawDmg * 1.5).toInt() else rawDmg
+        val blocked  = minOf(enemy.block, dmg)
         val newBlock = maxOf(0, enemy.block - dmg)
         val newHp    = maxOf(0, enemy.hp - maxOf(0, dmg - blocked))
         val updatedEnemies = enemies.toMutableList().also {
