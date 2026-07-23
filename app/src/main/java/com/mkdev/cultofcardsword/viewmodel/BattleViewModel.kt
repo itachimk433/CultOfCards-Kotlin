@@ -148,21 +148,24 @@ class BattleViewModel : ViewModel() {
             state = state.copy(playerMana = minOf(state.playerMaxMana, state.playerMana + effects.manaGain))
         }
 
-        // Damage to primary target
+        // Damage to primary target — always target the first ALIVE enemy
         if (effects.damage > 0 && state.enemies.isNotEmpty()) {
-            var dmg = effects.damage + state.playerStrength + attackBonus
-            if (state.isFirstAttack) { dmg *= 2; state = state.copy(isFirstAttack = false) }
-            if (isWeak) dmg = (dmg * 0.75).toInt()
-            val animation = AttackAnimation(
-                damage         = dmg,
-                targetEnemyIdx = 0,
-                isPlayerAttack = true,
-                attackerName   = card.name,
-                isCritical     = state.isFirstAttack
-            )
-            state = state.dealDamageToEnemy(0, dmg).copy(attackAnimation = animation)
-            totalDmg += dmg
-            msg = "${card.name}: $dmg damage"
+            val targetIdx = state.enemies.indexOfFirst { it.hp > 0 }
+            if (targetIdx >= 0) {
+                var dmg = effects.damage + state.playerStrength + attackBonus
+                if (state.isFirstAttack) { dmg *= 2; state = state.copy(isFirstAttack = false) }
+                if (isWeak) dmg = (dmg * 0.75).toInt()
+                val animation = AttackAnimation(
+                    damage         = dmg,
+                    targetEnemyIdx = targetIdx,
+                    isPlayerAttack = true,
+                    attackerName   = card.name,
+                    isCritical     = state.isFirstAttack
+                )
+                state = state.dealDamageToEnemy(targetIdx, dmg).copy(attackAnimation = animation)
+                totalDmg += dmg
+                msg = "${card.name}: $dmg damage"
+            }
         }
 
         // Damage all enemies
@@ -197,15 +200,16 @@ class BattleViewModel : ViewModel() {
             state = state.copy(playerHp = maxOf(1, state.playerHp - effects.loseHp))
         }
 
-        // Apply enemy effects
-        if (state.enemies.isNotEmpty()) {
-            var enemy = state.enemies[0]
+        // Apply enemy effects — target the first alive enemy
+        val firstAliveIdx = state.enemies.indexOfFirst { it.hp > 0 }
+        if (firstAliveIdx >= 0) {
+            var enemy = state.enemies[firstAliveIdx]
             if (effects.poison     > 0) enemy = enemy.copy(effects = applyEffect(enemy.effects, EffectType.POISON,     effects.poison))
             if (effects.burn       > 0) enemy = enemy.copy(effects = applyEffect(enemy.effects, EffectType.BURN,       effects.burn))
             if (effects.freeze     > 0) enemy = enemy.copy(effects = applyEffect(enemy.effects, EffectType.FREEZE,     effects.freeze))
             if (effects.vulnerable > 0) enemy = enemy.copy(effects = applyEffect(enemy.effects, EffectType.VULNERABLE, effects.vulnerable))
             if (effects.weak       > 0) enemy = enemy.copy(effects = applyEffect(enemy.effects, EffectType.WEAK,       effects.weak))
-            val newEnemies = state.enemies.toMutableList().also { it[0] = enemy }
+            val newEnemies = state.enemies.toMutableList().also { it[firstAliveIdx] = enemy }
             state = state.copy(enemies = newEnemies)
             if (effects.poison > 0) msg = "${card.name}: ${effects.poison} poison applied"
         }
@@ -223,7 +227,7 @@ class BattleViewModel : ViewModel() {
 
         state = state.copy(totalDamageDealt = totalDmg)
 
-        // Check victory
+        // Check victory — all enemies must be dead
         val aliveEnemies = state.enemies.filter { it.hp > 0 }
         if (aliveEnemies.isEmpty()) {
             state = state.copy(phase = BattlePhase.VICTORY, message = "Victory! The enemy falls!")
@@ -275,7 +279,6 @@ class BattleViewModel : ViewModel() {
             val freezeStacks = getEffectValue(e.effects, EffectType.FREEZE)
             if (freezeStacks > 0) {
                 e = e.copy(effects = decrementEffect(e.effects, EffectType.FREEZE))
-                // Set a "frozen" animation so UI still transitions
                 s = s.copy(
                     message         = "${e.name} is frozen and cannot act!",
                     attackAnimation = AttackAnimation(
@@ -317,7 +320,6 @@ class BattleViewModel : ViewModel() {
                     e = e.copy(block = e.block + move.value)
                     s = s.copy(
                         message         = "${e.name}: ${move.label} (+${move.value} block)",
-                        // Always set an animation so the UI LaunchedEffect fires
                         attackAnimation = AttackAnimation(
                             damage         = 0,
                             isPlayerAttack = false,
@@ -374,7 +376,6 @@ class BattleViewModel : ViewModel() {
      */
     fun startPlayerTurn() {
         var s = _battleState.value ?: return
-        // Guard: don't start a player turn if battle is already over
         if (s.phase == BattlePhase.DEFEAT || s.phase == BattlePhase.VICTORY) return
 
         val newMana    = minOf(s.playerMaxMana, s.playerMana + 5)

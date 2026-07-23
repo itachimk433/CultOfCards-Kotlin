@@ -106,6 +106,12 @@ fun AppNavigation() {
                     navController.navigate(Routes.GAME_OVER) {
                         popUpTo(Routes.MAIN_MENU)
                     }
+                },
+                onLeave = {
+                    // Player chose to flee mid-battle — treat as defeat / return to campaign
+                    navController.navigate(Routes.CAMPAIGN) {
+                        popUpTo(Routes.CAMPAIGN) { inclusive = true }
+                    }
                 }
             )
         }

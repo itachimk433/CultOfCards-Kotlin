@@ -3,6 +3,7 @@ package com.mkdev.cultofcardsword.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -10,6 +11,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,10 +31,19 @@ fun CultSelectScreen(
     onCultSelected: (CultId) -> Unit,
     onBack: () -> Unit
 ) {
-    var selectedCult  by remember { mutableStateOf<CultId?>(null) }
+    var selectedCult by remember { mutableStateOf<CultId?>(null) }
     val cults = CultId.entries.toList()
 
-    Box(modifier = Modifier.fillMaxSize().background(DeepBlack)) {
+    // Dismiss the detail panel when tapping anywhere outside it (the background)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DeepBlack)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication        = null
+            ) { selectedCult = null }
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -66,7 +77,7 @@ fun CultSelectScreen(
                 modifier  = Modifier.fillMaxWidth().padding(bottom = 12.dp)
             )
 
-            // Grid of cults
+            // Grid of cults — stop tap propagation so clicking a card doesn't bubble to the outer dismiss
             LazyVerticalGrid(
                 columns               = GridCells.Fixed(3),
                 verticalArrangement   = Arrangement.spacedBy(8.dp),
@@ -85,7 +96,11 @@ fun CultSelectScreen(
             // Detail panel for selected cult
             selectedCult?.let { cult ->
                 Spacer(Modifier.height(12.dp))
-                CultDetailPanel(cult = cult, onConfirm = { onCultSelected(cult) })
+                CultDetailPanel(
+                    cult      = cult,
+                    onDismiss = { selectedCult = null },
+                    onConfirm = { onCultSelected(cult) }
+                )
             }
 
             Spacer(Modifier.height(12.dp))
@@ -106,7 +121,8 @@ private fun CultCard(cult: CultId, isSelected: Boolean, onClick: () -> Unit) {
                 color = if (isSelected) cultColor else CardBorder,
                 shape = RoundedCornerShape(10.dp)
             )
-            .clickable(onClick = onClick)
+            // Stop tap from propagating to the outer dismiss handler
+            .clickable { onClick() }
             .padding(8.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -126,7 +142,7 @@ private fun CultCard(cult: CultId, isSelected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CultDetailPanel(cult: CultId, onConfirm: () -> Unit) {
+private fun CultDetailPanel(cult: CultId, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     val cultColor = Color(cult.color)
     val stats     = cult.totalStats
 
@@ -136,16 +152,35 @@ private fun CultDetailPanel(cult: CultId, onConfirm: () -> Unit) {
             .clip(RoundedCornerShape(12.dp))
             .background(DarkSurface)
             .border(1.dp, cultColor, RoundedCornerShape(12.dp))
+            // Consume taps inside the panel so they don't bubble to the outer dismiss
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication        = null
+            ) { /* consume */ }
             .padding(14.dp)
     ) {
         Column {
-            // ── Header row ──────────────────────────────────────────────
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // ── Header row with X dismiss button ────────────────────────
+            Row(
+                modifier          = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(cult.icon, fontSize = 28.sp)
                 Spacer(Modifier.width(10.dp))
-                Column {
-                    Text(cult.displayName, color = cultColor,    fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Text(cult.subtitle,    color = AccentGold,   fontSize = 10.sp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(cult.displayName, color = cultColor,  fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(cult.subtitle,    color = AccentGold, fontSize = 10.sp)
+                }
+                IconButton(
+                    onClick  = onDismiss,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint   = TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
             Spacer(Modifier.height(6.dp))
@@ -161,7 +196,7 @@ private fun CultDetailPanel(cult: CultId, onConfirm: () -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Drag to rotate · zoom disabled",
+                    "Drag to rotate",
                     color     = TextSecondary.copy(alpha = 0.5f),
                     fontSize  = 8.sp,
                     textAlign = TextAlign.Center,

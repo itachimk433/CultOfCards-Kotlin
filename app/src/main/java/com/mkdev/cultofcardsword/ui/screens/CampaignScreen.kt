@@ -36,6 +36,9 @@ fun CampaignScreen(
 
     val act = getStoryAct(r.act)
 
+    // Quit confirmation state
+    var showQuitConfirm by remember { mutableStateOf(false) }
+
     Box(modifier = Modifier.fillMaxSize().background(DeepBlack)) {
         Column(
             modifier = Modifier.fillMaxSize().systemBarsPadding()
@@ -177,10 +180,47 @@ fun CampaignScreen(
                 ) {
                     Text("📜 Quests", fontSize = 13.sp)
                 }
-                IconButton(onClick = onQuit) {
+                // Quit — shows confirmation before abandoning the run
+                IconButton(onClick = { showQuitConfirm = true }) {
                     Icon(Icons.Default.ExitToApp, null, tint = DangerRed)
                 }
             }
+        }
+
+        // ---- Abandon run confirmation dialog ----
+        if (showQuitConfirm) {
+            AlertDialog(
+                onDismissRequest = { showQuitConfirm = false },
+                containerColor   = DarkSurface,
+                title = {
+                    Text(
+                        "Abandon Your Path?",
+                        color      = SwordGold,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 18.sp
+                    )
+                },
+                text = {
+                    Text(
+                        "You have chosen the ${r.cultId.displayName} path. Leaving now will permanently end this run and all progress will be lost.",
+                        color    = TextSecondary,
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showQuitConfirm = false
+                        onQuit()
+                    }) {
+                        Text("Abandon Run", color = DangerRed, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showQuitConfirm = false }) {
+                        Text("Keep Fighting", color = HpGreen)
+                    }
+                }
+            )
         }
     }
 }

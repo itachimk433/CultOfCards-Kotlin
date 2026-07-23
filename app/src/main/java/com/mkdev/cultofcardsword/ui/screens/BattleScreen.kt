@@ -1,5 +1,6 @@
 package com.mkdev.cultofcardsword.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -35,13 +36,18 @@ fun BattleScreen(
     gameVm: GameViewModel,
     battleVm: BattleViewModel,
     onVictory: () -> Unit,
-    onDefeat: () -> Unit
+    onDefeat: () -> Unit,
+    onLeave: () -> Unit = {}
 ) {
     val state        by battleVm.battleState.collectAsState()
     val run          by gameVm.run.collectAsState()
     var selectedCard by remember { mutableStateOf<String?>(null) }
     var errorMsg     by remember { mutableStateOf<String?>(null) }
     var showAnimMsg  by remember { mutableStateOf(false) }
+
+    // ---- Leave-battle confirmation ----
+    var showLeaveConfirm by remember { mutableStateOf(false) }
+    BackHandler { showLeaveConfirm = true }
 
     // ---- Full-screen flash ----
     var flashColor  by remember { mutableStateOf(Color.Transparent) }
@@ -70,6 +76,9 @@ fun BattleScreen(
     var playerDmgValue  by remember { mutableIntStateOf(0) }
     var showPlayerDmg   by remember { mutableStateOf(false) }
     var playerHitActive by remember { mutableStateOf(false) }
+
+    // ---- "You took N damage" toast ----
+    var damageTakenMsg by remember { mutableStateOf<String?>(null) }
 
     val playerDmgOffsetY by animateFloatAsState(
         targetValue   = if (showPlayerDmg) -44f else 0f,
@@ -107,13 +116,19 @@ fun BattleScreen(
                 battleVm.endTurn()
             }
         } else {
-            // Freeze visible bar during enemy phase / animations
             timeLeft = 0f
         }
     }
 
+    // ---- Damage toast auto-clear ----
+    LaunchedEffect(damageTakenMsg) {
+        if (damageTakenMsg != null) {
+            delay(2500)
+            damageTakenMsg = null
+        }
+    }
+
     // ---- Unified attack animation coroutine ----
-    // Key on attackAnimation object — fires whenever a new animation is published.
     LaunchedEffect(state?.attackAnimation) {
         val anim = state?.attackAnimation ?: return@LaunchedEffect
         showAnimMsg = true
@@ -149,18 +164,20 @@ fun BattleScreen(
             slashIcon  = if (anim.damage > 0) "💥" else "🛡"
 
             if (anim.damage > 0) {
-                // Player damage float — triggered from here so it can't be interrupted
+                // Set the toast message
+                damageTakenMsg = "You took ${anim.damage} damage!"
+                // Player damage float
                 playerDmgValue  = anim.damage
-                showPlayerDmg   = false      // snap to origin
+                showPlayerDmg   = false
                 playerHitActive = true
-                delay(20)                    // one frame so the reset propagates
-                showPlayerDmg   = true       // start float-up + fade-out
+                delay(20)
+                showPlayerDmg   = true
                 delay(180)
                 playerHitActive = false
                 delay(520)
                 showPlayerDmg   = false
             } else {
-                delay(300) // brief pause for block/buff messages
+                delay(300)
             }
 
             flashActive  = true
@@ -172,7 +189,6 @@ fun BattleScreen(
             delay(300)
             showAnimMsg = false
 
-            // Hand off to the ViewModel to set up the next player turn
             battleVm.startPlayerTurn()
         }
     }
@@ -208,6 +224,11 @@ fun BattleScreen(
         else                 -> lerp(DangerRed,   EnergyAmber, timerFraction * 2f)
     }
 
+    // Only show the countdown bar when player hasn't played a card yet,
+    // or during enemy phase ("Enemy acting...")
+    val showTimerBar = (s.phase == BattlePhase.PLAYER && s.cardsPlayedThisTurn == 0) ||
+                        s.phase == BattlePhase.ENEMY
+
     Box(modifier = Modifier.fillMaxSize().background(DeepBlack)) {
 
         Column(
@@ -232,13 +253,14 @@ fun BattleScreen(
                 showDmg      = showPlayerDmg,
                 dmgOffsetY   = playerDmgOffsetY,
                 dmgAlpha     = playerDmgAlpha,
-                shakeOffsetX = activeShakeX
+                shakeOffsetX = activeShakeX,
+                damageTakenMsg = damageTakenMsg
             )
 
             Spacer(Modifier.height(6.dp))
 
-            // ---- Countdown bar (only during player phase) ----
-            if (s.phase == BattlePhase.PLAYER || s.phase == BattlePhase.ENEMY) {
+            // ---- Countdown bar (only during player phase before card is played, or enemy phase) ----
+            if (showTimerBar) {
                 val isPlayerPhase = s.phase == BattlePhase.PLAYER
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -319,7 +341,7 @@ fun BattleScreen(
                 s.enemies.forEachIndexed { idx, enemy ->
                     EnemyView(
                         enemy           = enemy,
-                        isTarget        = idx == 0 && enemy.hp > 0,
+                        isTarget        = idx == s.enemies.indexOfFirst { it.hp > 0 } && enemy.hp > 0,
                         attackAnimation = if (showAnimMsg) s.attackAnimation else null,
                         modifier        = Modifier.weight(1f)
                     )
@@ -415,6 +437,42 @@ fun BattleScreen(
             BattlePhase.DEFEAT  -> PhaseOverlay("💀 DEFEATED", DangerRed, "You have fallen in battle...")
             else                -> {}
         }
+
+        // ---- Leave battle confirmation dialog ----
+        if (showLeaveConfirm) {
+            AlertDialog(
+                onDismissRequest = { showLeaveConfirm = false },
+                containerColor   = DarkSurface,
+                title = {
+                    Text(
+                        "Flee the Battle?",
+                        color      = SwordGold,
+                        fontWeight = FontWeight.Bold,
+                        fontSize   = 18.sp
+                    )
+                },
+                text = {
+                    Text(
+                        "Leaving mid-fight counts as a defeat. Your progress in this battle will be lost.",
+                        color    = TextSecondary,
+                        fontSize = 13.sp
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        showLeaveConfirm = false
+                        onLeave()
+                    }) {
+                        Text("Flee", color = DangerRed, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showLeaveConfirm = false }) {
+                        Text("Stay & Fight", color = HpGreen)
+                    }
+                }
+            )
+        }
     }
 }
 
@@ -434,11 +492,39 @@ private fun PlayerStatsBar(
     showDmg: Boolean,
     dmgOffsetY: Float,
     dmgAlpha: Float,
-    shakeOffsetX: Float
+    shakeOffsetX: Float,
+    damageTakenMsg: String?
 ) {
     val hpFraction   = (hp.toFloat() / maxHp.toFloat()).coerceIn(0f, 1f)
     val manaFraction = if (maxMana > 0) (mana.toFloat() / maxMana.toFloat()).coerceIn(0f, 1f) else 0f
     val cultColor    = cultId?.let { Color(it.color) } ?: SwordGold
+
+    // Low-resource flash (below 10%)
+    val isLowHp   = hpFraction < 0.10f
+    val isLowMana = manaFraction < 0.10f
+
+    val lowResourcePulse = rememberInfiniteTransition(label = "low_resource_pulse")
+    val hpPulseAlpha by lowResourcePulse.animateFloat(
+        initialValue  = 0.35f,
+        targetValue   = 1f,
+        animationSpec = infiniteRepeatable(tween(500, easing = LinearEasing), RepeatMode.Reverse),
+        label         = "hp_pulse"
+    )
+    val manaPulseAlpha by lowResourcePulse.animateFloat(
+        initialValue  = 0.35f,
+        targetValue   = 1f,
+        animationSpec = infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse),
+        label         = "mana_pulse"
+    )
+
+    val hpBarColor = if (isLowHp) DangerRed.copy(alpha = hpPulseAlpha) else when {
+        hpFraction < 0.25f -> DangerRed
+        hpFraction < 0.5f  -> EnergyAmber
+        else               -> HpGreen
+    }
+    val hpTextColor  = if (isLowHp) DangerRed.copy(alpha = hpPulseAlpha) else HpGreen
+    val manaBarColor = if (isLowMana) ManaBlue.copy(alpha = manaPulseAlpha) else ManaBlue
+    val manaTextColor = if (isLowMana) ManaBlue.copy(alpha = manaPulseAlpha) else ManaBlue
 
     Box(
         modifier = Modifier
@@ -476,7 +562,7 @@ private fun PlayerStatsBar(
                 ) {
                     Text(
                         text       = "❤ $hp/$maxHp",
-                        color      = HpGreen,
+                        color      = hpTextColor,
                         fontSize   = 10.sp,
                         fontWeight = FontWeight.Bold,
                         modifier   = Modifier.width(72.dp)
@@ -484,11 +570,7 @@ private fun PlayerStatsBar(
                     LinearProgressIndicator(
                         progress   = { hpFraction },
                         modifier   = Modifier.weight(1f).height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color      = when {
-                            hpFraction < 0.25f -> DangerRed
-                            hpFraction < 0.5f  -> EnergyAmber
-                            else               -> HpGreen
-                        },
+                        color      = hpBarColor,
                         trackColor = CardBorder
                     )
                     if (block > 0) Text("🛡$block", color = BlockGray, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -500,7 +582,7 @@ private fun PlayerStatsBar(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
                             .offset(x = 76.dp, y = dmgOffsetY.dp)
-                            .alpha(1f - dmgAlpha) // inverted: opaque while rising, fades to 0
+                            .alpha(1f - dmgAlpha)
                     ) {
                         Text(
                             text       = "-$dmgValue",
@@ -519,6 +601,27 @@ private fun PlayerStatsBar(
                 }
             }
 
+            // "You took N damage" banner
+            if (damageTakenMsg != null) {
+                Spacer(Modifier.height(3.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(5.dp))
+                        .background(DangerRed.copy(alpha = 0.18f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text       = "💢 $damageTakenMsg",
+                        color      = DangerRed,
+                        fontSize   = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign  = TextAlign.Center
+                    )
+                }
+            }
+
             Spacer(Modifier.height(3.dp))
 
             // Mana + energy row
@@ -528,7 +631,7 @@ private fun PlayerStatsBar(
             ) {
                 Text(
                     text       = "💧$mana/$maxMana",
-                    color      = ManaBlue,
+                    color      = manaTextColor,
                     fontSize   = 10.sp,
                     fontWeight = FontWeight.Bold,
                     modifier   = Modifier.width(72.dp)
@@ -536,7 +639,7 @@ private fun PlayerStatsBar(
                 LinearProgressIndicator(
                     progress   = { manaFraction },
                     modifier   = Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(3.dp)),
-                    color      = ManaBlue,
+                    color      = manaBarColor,
                     trackColor = CardBorder
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
